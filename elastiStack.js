@@ -5,6 +5,8 @@
  * Licensed under the MIT license.
  * http://www.opensource.org/licenses/mit-license.php
  * 
+ * Copyright 2015, Codrops
+ * http://www.codrops.com
  */
 ;( function( window ) {
 	
@@ -21,16 +23,25 @@
 
 	// support
 	var is3d = !!getStyleProperty( 'perspective' ),
-		supportTransitions = Modernizr.csstransitions,
+		support = { transitions: Modernizr.csstransitions },
 		// transition end event name
-		transEndEventNames = {
-			'WebkitTransition': 'webkitTransitionEnd',
-			'MozTransition': 'transitionend',
-			'OTransition': 'oTransitionEnd',
-			'msTransition': 'MSTransitionEnd',
-			'transition': 'transitionend'
-		},
-		transEndEventName = transEndEventNames[ Modernizr.prefixed( 'transition' ) ];
+		transEndEventNames = { 'WebkitTransition': 'webkitTransitionEnd', 'MozTransition': 'transitionend', 'OTransition': 'oTransitionEnd', 'msTransition': 'MSTransitionEnd', 'transition': 'transitionend' },
+		transEndEventName = transEndEventNames[ Modernizr.prefixed( 'transition' ) ],
+		onEndTransition = function( el, callback ) {
+			var onEndCallbackFn = function( ev ) {
+				if( support.transitions ) {
+					if( ev.target != this ) return;
+					this.removeEventListener( transEndEventName, onEndCallbackFn );
+				}
+				if( callback && typeof callback === 'function' ) { callback.call(this); }
+			};
+			if( support.transitions ) {
+				el.addEventListener( transEndEventName, onEndCallbackFn );
+			}
+			else {
+				onEndCallbackFn();
+			}
+		};
 
 	function ElastiStack( el, options ) {
 		this.container = el;
@@ -100,21 +111,52 @@
 		}
 	};
 
+	ElastiStack.prototype._reset = function() {
+		// reorder stack
+		this.current = this.current < this.itemsCount - 1 ? this.current + 1 : 0;
+		// new front items
+		var item1 = this._firstItem(), item2 = this._secondItem(), item3 = this._thirdItem();
+
+		// reset transition timing function
+		classie.remove( item1, 'move-back' );
+		if( item2 ) classie.remove( item2, 'move-back' );
+		if( item3 ) classie.remove( item3, 'move-back' );
+
+		var self = this;
+		setTimeout( function() {
+			// the upcoming one will animate..
+			classie.add( self._lastItem(), 'animate' );
+			// reset styles
+			self._setStackStyle();
+		}, 25 );
+
+		// add dragging capability
+		this._initDragg();
+
+		// init drag events on new current item
+		this._initEvents();
+
+		// callback
+		this.options.onUpdateStack( this.current );
+	};
+
 	ElastiStack.prototype._moveAway = function( instance ) {
+		var el = instance.element;
+
 		// disable drag
 		this._disableDragg();
 		
 		// add class "animate"
-		classie.add( instance.element, 'animate' );
+		classie.add( el, 'animate' );
 		
 		// calculate how much to translate in the x and y axis
 		var tVal = this._getTranslateVal( instance );
 		
 		// apply it	
-		setTransformStyle( instance.element, is3d ? 'translate3d(' + tVal.x + 'px,' + tVal.y + 'px, 0px)' : 'translate(' + tVal.x + 'px,' + tVal.y + 'px)' );
+		setTransformStyle( el, is3d ? 'translate3d(' + tVal.x + 'px,' + tVal.y + 'px, 0px)' : 'translate(' + tVal.x + 'px,' + tVal.y + 'px)' );
 		
 		// item also fades out
-		instance.element.style.opacity = 0;
+		el.style.opacity = 0;
 
 		// other items move back to stack
 		var item2 = this._secondItem(), item3 = this._thirdItem();
@@ -131,51 +173,16 @@
 		}
 
 		// after transition ends..
-		var self = this,
-			onEndTransFn = function() {
-				instance.element.removeEventListener( transEndEventName, onEndTransFn );
-				
-				// reset first item
-				setTransformStyle( instance.element, is3d ? 'translate3d(0,0,-180px)' : 'translate(0,0,0)' );
-				instance.element.style.left = instance.element.style.top = '0px';
-				instance.element.style.zIndex = -1;
-				classie.remove( instance.element, 'animate' );
+		var self = this;
+		onEndTransition( el, function() {
+			// reset first item
+			setTransformStyle( el, is3d ? 'translate3d(0,0,-180px)' : 'translate(0,0,0)' );
+			el.style.left = el.style.top = '0px';
+			el.style.zIndex = -1;
+			classie.remove( el, 'animate' );
 
-				// reorder stack
-				self.current = self.current < self.itemsCount - 1 ? self.current + 1 : 0;
-				// new front items
-				var item1 = self._firstItem(),
-					item2 = self._secondItem(),
-					item3 = self._thirdItem();
-
-				// reset transition timing function
-				classie.remove( item1, 'move-back' );
-				if( item2 ) classie.remove( item2, 'move-back' );
-				if( item3 ) classie.remove( item3, 'move-back' );
-
-				setTimeout( function() {
-					// the upcoming one will animate..
-					classie.add( self._lastItem(), 'animate' );
-					// reset style
-					self._setStackStyle();
-				}, 25 );
-
-				// add dragging capability
-				self._initDragg();
-
-				// init drag events on new current item
-				self._initEvents();
-
-				// callback
-				self.options.onUpdateStack( self.current );
-			};
-
-		if( supportTransitions ) {
-			instance.element.addEventListener( transEndEventName, onEndTransFn );
-		}
-		else {
-			onEndTransFn.call();
-		}
+			self._reset();
+		} );
 	};
 
 	ElastiStack.prototype._moveBack = function( instance ) {
@@ -248,6 +255,47 @@
 
 	ElastiStack.prototype._disableDragg = function() {
 		this.draggie.disable();
+	};
+
+	ElastiStack.prototype.nextItem = function( val ) {
+		if( this.isAnimating ) {
+			return false;
+		}
+		this.isAnimating = true;
+
+		var item1 = this._firstItem(), item2 = this._secondItem(), item3 = this._thirdItem();
+		
+		// first item get class animate
+		classie.add( item1, 'animate' );
+		if( item2 ) {
+			classie.add( item2, 'animate' );
+		}
+		if( item3 ) {
+			classie.add( item3, 'animate' );
+		}
+		
+		// now translate up and fade out (Z axis)
+		setTransformStyle( item1, is3d ? val.transform : 'translate(0,0)' );
+		item1.style.opacity = 0;
+		item1.style.zIndex = 5;
+
+		var self = this;
+
+		onEndTransition( item1, function() {
+			classie.remove( item1, 'animate' );
+			//classie.remove( this, 'move-back' );
+			item1.style.zIndex = -1;
+
+			// reset first item
+			setTimeout( function() {
+				setTransformStyle( item1, is3d ? 'translate3d(0,0,-180px)' : 'translate(0,0,0)' );
+				self.isAnimating = false;
+			}, 25 );
+		} );
+
+		// disable drag
+		this._disableDragg();
+		this._reset();
 	};
 
 	// returns true if x or y is bigger than distDragMax
